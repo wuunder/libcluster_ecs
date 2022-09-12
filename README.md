@@ -26,11 +26,10 @@ config :libcluster,
   ]
 ```
 
-Configure libcluster EPMD:
+Configure libcluster EPMD by setting `DISTRIBUTION_PORT` in `rel/env.sh.eex`. This needs to be an env var because this EPMD module is used during startup and application configuration is not available yet:
 
 ```
-config :libcluster_ecs,
-  container_port: 7777
+export DISTRIBUTION_PORT=7777
 ```
 
 Add the following line to `rel/vm.args.eex`:
