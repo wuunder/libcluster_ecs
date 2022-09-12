@@ -36,7 +36,9 @@ defmodule Cluster.EcsClusterInfo do
   def init(config) do
     set_refresh()
 
-    state = set_config(config, %{})
+    state =
+      set_config(config, %{})
+      |> IO.inspect(label: "CONFIG")
 
     {:ok, nodes} = my_get_nodes(state)
 
