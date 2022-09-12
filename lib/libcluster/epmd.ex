@@ -13,7 +13,8 @@ defmodule Cluster.EPMD do
   end
 
   def listen_port_please(_name, _hostname) do
-    container_port = System.get_env("DISTRIBUTION_PORT") |> String.to_integer()
+    container_port = Application.get_env(:libcluster_ecs, :distribution_port)
+    # container_port = System.get_env("DISTRIBUTION_PORT") |> String.to_integer()
     {:ok, container_port}
   end
 
