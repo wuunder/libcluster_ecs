@@ -256,14 +256,20 @@ defmodule Cluster.EcsClusterInfo do
           end
 
         host_port =
-          Map.get(c, "networkBindings")
-          |> Enum.find_value(fn
-            %{"containerPort" => ^container_port, "hostPort" => h_port} ->
-              h_port
+          case Map.get(c, "networkBindings") do
+            nil ->
+              nil
 
-            _ ->
-              false
-          end)
+            network_bindings ->
+              network_bindings
+              |> Enum.find_value(fn
+                %{"containerPort" => ^container_port, "hostPort" => h_port} ->
+                  h_port
+
+                _ ->
+                  false
+              end)
+          end
 
         if container_instance_arn && runtime_id && host_port do
           {container_instance_arn, runtime_id, host_port}
