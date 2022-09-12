@@ -23,7 +23,7 @@ defmodule ClusterEcs.MixProject do
     [
       {:ex_aws, "~> 2.1"},
       {:ex_aws_ec2, "~> 2.0"},
-      {:sweet_xml, "~> 0.7.3"}
+      {:sweet_xml, "~> 0.7.0"}
     ]
   end
 end
