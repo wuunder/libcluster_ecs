@@ -2,7 +2,7 @@
 
 Use this library to set up clustering within AWS ECS.
 
-This library, unlike others, does not rely on configuring your nodes with `awsvpc` networking mode. Instead it uses port mappings to accomplish the goal.
+This library, unlike others, does not rely on configuring your nodes with `awsvpc` networking mode. Instead it queries ECC's port mappings to accomplish the goal.
 
 ## Getting started
 
@@ -37,6 +37,17 @@ Add the following line to `rel/vm.args.eex`:
 
 ```
 -epmd_module Elixir.Cluster.EPMD
+```
+
+Configure (if you haven't already) `ex_aws`. The IAM user that you configure needs the following permissions:
+
+```
+ecs:ListClusters"
+ecs:ListServices
+ecs:ListTasks
+ecs:DescribeTasks
+ecs:DescribeContainerInstances
+ec2:DescribeInstances
 ```
 
 ## Installation
