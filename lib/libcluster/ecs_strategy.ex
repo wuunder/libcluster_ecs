@@ -81,7 +81,7 @@ defmodule Cluster.EcsStrategy do
 
   @spec get_nodes(State.t()) :: [atom()]
   defp get_nodes(%State{topology: _topology, config: _config}) do
-    LibCluster.EcsClusterInfo.get_nodes()
+    Cluster.EcsClusterInfo.get_nodes()
     |> Map.keys()
   end
 
