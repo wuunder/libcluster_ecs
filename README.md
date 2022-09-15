@@ -2,7 +2,7 @@
 
 Use this library to set up clustering within AWS ECS.
 
-This library, unlike others, does not rely on configuring your nodes with `awsvpc` networking mode. Instead it queries ECC's port mappings to accomplish the goal.
+This library, unlike others, does not rely on configuring your nodes with `awsvpc` networking mode. Instead it queries ECS's port mappings to accomplish the goal.
 
 ## Getting started
 
