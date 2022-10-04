@@ -16,16 +16,10 @@ defmodule Cluster.EcsClusterInfo do
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
   end
 
-  @spec get_nodes() :: %{(node_name :: String.t()) => {ip :: tuple(), port :: integer()}}
-  def get_nodes(config \\ []) do
-    case GenServer.whereis(__MODULE__) do
-      nil ->
-        {:ok, nodes} = my_get_nodes(set_config(config, %{}))
-        nodes
-
-      _ ->
-        GenServer.call(__MODULE__, :get_nodes)
-    end
+  @spec get_nodes() ::
+          %{(node_name :: String.t()) => {ip :: tuple(), port :: integer()}} | no_return()
+  def get_nodes() do
+    GenServer.call(__MODULE__, :get_nodes)
   end
 
   @impl true

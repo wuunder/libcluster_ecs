@@ -15,7 +15,6 @@ defmodule Cluster.EcsStrategy do
 
   @impl true
   def init([%State{meta: nil} = state]) do
-    {:ok, _pid} = Cluster.EcsClusterInfo.start_link(state.config)
     init([%State{state | :meta => MapSet.new()}])
   end
 
@@ -33,7 +32,11 @@ defmodule Cluster.EcsStrategy do
   end
 
   defp load(%State{topology: topology, meta: meta} = state) do
-    new_nodelist = MapSet.new(get_nodes(state))
+    new_nodelist =
+      Cluster.EcsClusterInfo.get_nodes()
+      |> Map.keys()
+      |> MapSet.new()
+
     removed = MapSet.difference(meta, new_nodelist)
 
     new_nodelist =
@@ -77,12 +80,6 @@ defmodule Cluster.EcsStrategy do
     )
 
     %State{state | meta: new_nodelist}
-  end
-
-  @spec get_nodes(State.t()) :: [atom()]
-  defp get_nodes(%State{topology: _topology, config: _config}) do
-    Cluster.EcsClusterInfo.get_nodes()
-    |> Map.keys()
   end
 
   defp polling_interval(%State{config: config}) do

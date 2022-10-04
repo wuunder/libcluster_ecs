@@ -26,6 +26,17 @@ config :libcluster,
   ]
 ```
 
+Add `Cluster.EcsClusterInfo` to your supervision tree before the cluster supervisor and provide it with your config:
+
+```
+children = [
+  ...
+  {Cluster.EcsClusterInfo, [Application.get_env(:libcluster, :topologies)[:mycluster][:config]]},
+  {Cluster.Supervisor, [Application.get_env(:libcluster, :topologies), [name: MyApp.ClusterSupervisor]]}
+  ...
+  ]
+```
+
 Configure libcluster EPMD by setting `DISTRIBUTION_PORT` in `rel/env.sh.eex`. This needs to be an env var because this EPMD module is used during startup and application configuration is not available yet:
 
 ```
