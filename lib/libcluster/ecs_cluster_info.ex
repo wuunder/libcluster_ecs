@@ -23,10 +23,6 @@ defmodule Cluster.EcsClusterInfo do
   end
 
   @impl true
-  def init(nil) do
-    {:ok, nil}
-  end
-
   def init(config) do
     set_refresh()
 

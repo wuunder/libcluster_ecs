@@ -31,7 +31,7 @@ Add `Cluster.EcsClusterInfo` to your supervision tree before the cluster supervi
 ```
 children = [
   ...
-  {Cluster.EcsClusterInfo, [Application.get_env(:libcluster, :topologies)[:mycluster][:config]]},
+  {Cluster.EcsClusterInfo, Application.get_env(:libcluster, :topologies)[:mycluster][:config]},
   {Cluster.Supervisor, [Application.get_env(:libcluster, :topologies), [name: MyApp.ClusterSupervisor]]}
   ...
   ]
