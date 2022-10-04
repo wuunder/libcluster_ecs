@@ -13,37 +13,34 @@ defmodule Cluster.EcsClusterInfo do
   @refresh_timeout 10_000
 
   def start_link(config) do
-    GenServer.start_link(__MODULE__, config, name: __MODULE__)
+    GenServer.start_link(__MODULE__, config)
   end
 
   @spec get_nodes() ::
           %{(node_name :: String.t()) => {ip :: tuple(), port :: integer()}} | no_return()
   def get_nodes() do
-    GenServer.call(__MODULE__, :get_nodes)
+    :ets.tab2list(:ecs_cluster_info)
+    |> Map.new()
   end
 
   @impl true
   def init(config) do
+    :ets.new(:ecs_cluster_info, [:set, :public, :named_table])
+
     set_refresh()
 
     state = set_config(config, %{})
+    Task.start(fn -> :ok = my_get_nodes(state) end)
 
-    {:ok, nodes} = my_get_nodes(state)
-
-    {:ok, state |> Map.put(:nodes, nodes)}
-  end
-
-  @impl true
-  def handle_call(:get_nodes, _from, state) do
-    {:reply, Map.get(state, :nodes, %{}), state}
+    {:ok, state}
   end
 
   @impl true
   def handle_info(:refresh, state) do
-    {:ok, nodes} = my_get_nodes(state)
-
     set_refresh()
-    {:noreply, state |> Map.put(:nodes, nodes)}
+    Task.start(fn -> :ok = my_get_nodes(state) end)
+
+    {:noreply, state}
   end
 
   defp set_refresh() do
@@ -79,10 +76,14 @@ defmodule Cluster.EcsClusterInfo do
          {:ok, desc_task_body} <- describe_tasks(cluster_name, task_arns, region),
          {:ok, arns_ports} <- extract_arns_ports(desc_task_body, container_port),
          {:ok, ips_ports} <- extract_ips_ports(cluster_name, arns_ports, region) do
-      {:ok,
-       Map.new(ips_ports, fn {runtime_id, ip, port} ->
-         {runtime_id_to_nodename(runtime_id, app_prefix), {ip, port}}
-       end)}
+      Enum.each(ips_ports, fn {runtime_id, ip, port} ->
+        :ets.insert(
+          :ecs_cluster_info,
+          {runtime_id_to_nodename(runtime_id, app_prefix), {ip, port}}
+        )
+      end)
+
+      :ok
     else
       err ->
         Logger.warn(fn -> "Error #{inspect(err)} while determining nodes in cluster via ECS" end)
