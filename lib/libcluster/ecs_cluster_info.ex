@@ -12,6 +12,10 @@ defmodule Cluster.EcsClusterInfo do
 
   @refresh_timeout 10_000
 
+  defmodule Container do
+    defstruct [:arn, :host_port, :ip_address, :runtime_id]
+  end
+
   def start_link(config) do
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
   end
@@ -77,15 +81,15 @@ defmodule Cluster.EcsClusterInfo do
          {:ok, task_arns} <-
            get_tasks_for_services(cluster_name, region, service_arns, service_name),
          {:ok, desc_task_body} <- describe_tasks(cluster_name, task_arns, region),
-         {:ok, arns_ports} <- extract_arns_ports(desc_task_body, container_port),
-         {:ok, ips_ports} <- extract_ips_ports(cluster_name, arns_ports, region) do
+         {:ok, containers} <- extract_containers(desc_task_body, container_port),
+         {:ok, ips_ports} <- extract_ips_ports(cluster_name, containers, region) do
       {:ok,
        Map.new(ips_ports, fn {runtime_id, ip, port} ->
          {runtime_id_to_nodename(runtime_id, app_prefix), {ip, port}}
        end)}
     else
       err ->
-        Logger.warn(fn -> "Error #{inspect(err)} while determining nodes in cluster via ECS" end)
+        Logger.warning(fn -> "Error #{inspect(err)} while determining nodes in cluster via ECS" end)
 
         {:error, []}
     end
@@ -229,69 +233,81 @@ defmodule Cluster.EcsClusterInfo do
 
   defp find_service_arn(_, _), do: {:error, "no service arns returned"}
 
-  defp extract_arns_ports(%{"tasks" => tasks}, container_port) do
-    arns_ports =
+  defp extract_containers(%{"tasks" => tasks}, container_port) do
+    containers =
       tasks
-      |> Enum.flat_map(fn t ->
-        container_instance_arn = Map.get(t, "containerInstanceArn")
-
-        Map.get(t, "containers")
-        |> Enum.map(fn c -> {container_instance_arn, c} end)
-      end)
-      |> Enum.map(fn {container_instance_arn, c} ->
-        runtime_id =
-          case Map.get(c, "runtimeId") do
-            nil -> nil
-            string -> String.slice(string, 0..11)
-          end
-
-        host_port =
-          case Map.get(c, "networkBindings") do
-            nil ->
-              nil
-
-            network_bindings ->
-              network_bindings
-              |> Enum.find_value(fn
-                %{"containerPort" => ^container_port, "hostPort" => h_port} ->
-                  h_port
-
-                _ ->
-                  false
-              end)
-          end
-
-        if container_instance_arn && runtime_id && host_port do
-          {container_instance_arn, runtime_id, host_port}
-        else
-          nil
-        end
-      end)
+      |> Enum.flat_map(& extract_container_data(&1, container_port))
       |> Enum.filter(& &1)
 
-    {:ok, arns_ports}
+    {:ok, containers}
   end
 
-  defp extract_arns_ports(_, _), do: {:error, "can't extract ips"}
+  defp extract_containers(_, _), do: {:error, "can't extract containers"}
 
-  defp extract_ips_ports(cluster_name, arns_ports, region) do
+  defp extract_container_data(%{"launchType" => "FARGATE"} = task, container_port) do
+    task
+    |> Map.get("containers")
+    |> Enum.map(fn c ->
+      arn = Map.get(c, "containerArn")
+      runtime_id = get_runtime_id(c)
+      host_port = get_host_port(c, container_port) || container_port
+      ip_address = get_ip_address(c)
+
+      if arn && runtime_id && host_port && ip_address do
+        %Container{
+          arn: arn,
+          runtime_id: runtime_id,
+          host_port: host_port,
+          ip_address: ip_address
+        }
+      else
+        nil
+      end
+   end)
+  end
+
+  defp extract_container_data(%{"launchType" => "EC2"} = task, container_port) do
+    container_instance_arn = Map.get(task, "containerInstanceArn")
+
+    task
+    |> Map.get("containers")
+    |> Enum.map(fn c ->
+      runtime_id = get_runtime_id(c)
+      host_port = get_host_port(c, container_port)
+
+      if container_instance_arn && runtime_id && host_port do
+        %Container{
+          arn: container_instance_arn,
+          host_port: host_port,
+          runtime_id: runtime_id
+        }
+      else
+        nil
+      end
+   end)
+  end
+
+  defp extract_ips_ports(cluster_name, containers, region) do
     import SweetXml
 
     container_arns =
-      Enum.map(arns_ports, fn {container_arn, _runtime_id, _host_port} -> container_arn end)
+      containers
+      |> Enum.map(fn
+        %Container{arn: container_arn, ip_address: nil} -> container_arn
+        _ -> nil
+      end)
       |> Enum.uniq()
+      |> Enum.filter(& &1)
 
     {:ok, ecs_instances} =
       case container_arns do
-        [] ->
-          {:ok, []}
-
-        _ ->
-          describe_container_instances(cluster_name, container_arns, region)
+        [] -> {:ok, %{}}
+        _ -> describe_container_instances(cluster_name, container_arns, region)
       end
 
     container_arn_to_ip =
-      Map.get(ecs_instances, "containerInstances")
+      ecs_instances
+      |> Map.get("containerInstances", [])
       |> Enum.map(fn i ->
         instance_id = Map.get(i, "ec2InstanceId")
         {:ok, %{body: body}} = describe_ec2_instances([instance_id], region)
@@ -304,14 +320,43 @@ defmodule Cluster.EcsClusterInfo do
       end)
       |> Map.new()
 
-    {:ok,
-     Enum.map(arns_ports, fn {container_arn, runtime_id, host_port} ->
-       ip_address = Map.get(container_arn_to_ip, container_arn)
-       {runtime_id, ip_address, host_port}
-     end)}
+    result =
+      Enum.map(containers, fn
+        %Container{ip_address: nil} = container ->
+          ip_address = Map.get(container_arn_to_ip, container.arn)
+          {container.runtime_id, ip_address, container.host_port}
+
+        container ->
+          {container.runtime_id, container.ip_address, container.host_port}
+      end)
+
+    {:ok, result}
   end
 
   defp runtime_id_to_nodename(runtime_id, app_prefix) do
     :"#{app_prefix}@#{runtime_id}"
   end
+
+  defp get_runtime_id(%{"runtimeId" => runtime_id}), do: String.slice(runtime_id, 0..11)
+  defp get_runtime_id(_container), do: nil
+
+  defp get_host_port(%{"networkBindings" => bindings}, container_port) when is_list(bindings) do
+    Enum.find_value(bindings, fn
+     %{"containerPort" => ^container_port, "hostPort" => h_port} -> h_port
+     _ -> false
+    end)
+  end
+
+  defp get_host_port(_container, _container_port), do: nil
+
+  defp get_ip_address(%{"networkInterfaces" => [%{"privateIpv4Address" => string_ip}]}) do
+    {:ok, ip_address} =
+      string_ip
+      |> String.to_charlist()
+      |> :inet.parse_ipv4_address()
+
+    ip_address
+  end
+
+  defp get_ip_address(_container), do: nil
 end
