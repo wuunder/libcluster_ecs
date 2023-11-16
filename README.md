@@ -6,8 +6,10 @@ This library, unlike others, does not rely on configuring your nodes with `awsvp
 
 ## Getting started
 
-Create a container port mapping (eg, container port 7777 to host port 0, this will assign a random port).
+### In AWS
+Create a container port mapping (e.g. container port 7777 to host port 0, this will assign a random port).
 
+### In your Elixir project
 Configure the libcluster topology:
 
 ```
@@ -52,7 +54,7 @@ Add the following line to `rel/vm.args.eex`:
 Configure (if you haven't already) `ex_aws`. The IAM user that you configure needs the following permissions:
 
 ```
-ecs:ListClusters"
+ecs:ListClusters
 ecs:ListServices
 ecs:ListTasks
 ecs:DescribeTasks
@@ -68,7 +70,7 @@ by adding `libcluster_ecs` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:libcluster_ecs, "~> 0.1.0"}
+    {:libcluster_ecs, "~> 0.2.0"}
   ]
 end
 ```
