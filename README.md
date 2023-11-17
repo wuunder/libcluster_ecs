@@ -22,7 +22,8 @@ config :libcluster,
         service_name: "myservice",
         app_prefix: "myapp_prefix",
         region: "eu-west-1",
-        container_port: 7777
+        container_port: 7777,
+        runtime_id_source: :runtime_id
       ]
     ]
   ]
@@ -38,6 +39,8 @@ children = [
   ...
   ]
 ```
+
+If you want to use IP addresses in your node names set `runtime_id_source` to `:ip_address`
 
 Configure libcluster EPMD by setting `DISTRIBUTION_PORT` in `rel/env.sh.eex`. This needs to be an env var because this EPMD module is used during startup and application configuration is not available yet:
 
