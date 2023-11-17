@@ -11,7 +11,6 @@ defmodule Cluster.EcsClusterInfo do
   require Logger
 
   @refresh_timeout 10_000
-
   defmodule Container do
     defstruct [:arn, :host_port, :ip_address, :runtime_id]
   end

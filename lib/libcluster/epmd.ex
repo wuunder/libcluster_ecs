@@ -22,9 +22,11 @@ defmodule Cluster.EPMD do
   def address_please(name, hostname, family) do
     nodename = :"#{name}@#{hostname}"
 
-    case EcsClusterInfo.get_nodes() do
-      %{^nodename => {ip, port}} -> {:ok, ip, port, @magic_version}
-      _ -> :erl_epmd.address_please(name, hostname, family)
+    EcsClusterInfo.get_nodes()
+    |> Map.get(nodename)
+    |> case do
+      {ip, port} -> {:ok, ip, port, @magic_version}
+      nil -> :erl_epmd.address_please(name, hostname, family)
     end
   end
 
