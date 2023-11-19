@@ -11,8 +11,9 @@ defmodule Cluster.EcsClusterInfo do
   require Logger
 
   @refresh_timeout 10_000
+
   defmodule Container do
-    defstruct [:arn, :host_port, :ip_address, :runtime_id]
+    defstruct [:arn, :host_port, :host_name, :ip_address]
   end
 
   def start_link(config) do
@@ -59,7 +60,7 @@ defmodule Cluster.EcsClusterInfo do
     service_name = Keyword.fetch!(config, :service_name) |> List.wrap()
     app_prefix = Keyword.fetch!(config, :app_prefix)
     container_port = Keyword.fetch!(config, :container_port)
-    runtime_id_source = Keyword.get(config, :runtime_id_source, :runtime_id)
+    host_name_source = Keyword.get(config, :host_name_source, :runtime_id)
 
     state
     |> Map.put(:region, region)
@@ -67,7 +68,7 @@ defmodule Cluster.EcsClusterInfo do
     |> Map.put(:service_name, service_name)
     |> Map.put(:app_prefix, app_prefix)
     |> Map.put(:container_port, container_port)
-    |> Map.put(:runtime_id_source, runtime_id_source)
+    |> Map.put(:host_name_source, host_name_source)
   end
 
   defp my_get_nodes(state) do
@@ -76,19 +77,21 @@ defmodule Cluster.EcsClusterInfo do
     service_name = state.service_name
     app_prefix = state.app_prefix
     container_port = state.container_port
-    runtime_id_source = state.runtime_id_source
+    host_name_source = state.host_name_source
 
     with {:ok, list_service_body} <- list_services(cluster_name, region),
          {:ok, service_arns} <- extract_service_arns(list_service_body),
          {:ok, task_arns} <-
            get_tasks_for_services(cluster_name, region, service_arns, service_name),
          {:ok, desc_task_body} <- describe_tasks(cluster_name, task_arns, region),
-         {:ok, containers} <- extract_containers(desc_task_body, container_port, runtime_id_source),
-         {:ok, ips_ports} <- extract_ips_ports(cluster_name, containers, region) do
-      {:ok,
-       Map.new(ips_ports, fn {runtime_id, ip, port} ->
-         {runtime_id_to_nodename(runtime_id, app_prefix), {ip, port}}
-       end)}
+         {:ok, containers} <- extract_containers(desc_task_body, container_port, host_name_source),
+         {:ok, containers} <- set_ip_addresses(cluster_name, containers, region) do
+      nodes =
+        Map.new(containers, fn %Container{host_name: host_name, ip_address: ip, host_port: port} ->
+         {get_node_name(app_prefix, host_name), {ip, port}}
+       end)
+
+      {:ok, nodes}
     else
       err ->
         Logger.warning(fn -> "Error #{inspect(err)} while determining nodes in cluster via ECS" end)
@@ -235,10 +238,10 @@ defmodule Cluster.EcsClusterInfo do
 
   defp find_service_arn(_, _), do: {:error, "no service arns returned"}
 
-  defp extract_containers(%{"tasks" => tasks}, container_port, runtime_id_source) do
+  defp extract_containers(%{"tasks" => tasks}, container_port, host_name_source) do
     containers =
       tasks
-      |> Enum.flat_map(& extract_container_data(&1, container_port, runtime_id_source))
+      |> Enum.flat_map(& extract_container_data(&1, container_port, host_name_source))
       |> Enum.filter(& &1)
 
     {:ok, containers}
@@ -246,20 +249,19 @@ defmodule Cluster.EcsClusterInfo do
 
   defp extract_containers(_, _, _), do: {:error, "can't extract containers"}
 
-  defp extract_container_data(%{"launchType" => "FARGATE"} = task, container_port, runtime_id_source) do
+  defp extract_container_data(%{"launchType" => "FARGATE"} = task, container_port, host_name_source) do
     task
     |> Map.get("containers")
     |> Enum.map(fn c ->
       arn = Map.get(c, "containerArn")
-      runtime_id = get_runtime_id(c, runtime_id_source)
-      host_port = get_host_port(c, container_port) || container_port
+      host_name = get_host_name(c, host_name_source)
       ip_address = get_ip_address(c)
 
-      if arn && runtime_id && host_port && ip_address do
+      if arn && host_name && ip_address do
         %Container{
           arn: arn,
-          runtime_id: runtime_id,
-          host_port: host_port,
+          host_name: host_name,
+          host_port: container_port,
           ip_address: ip_address
         }
       else
@@ -268,20 +270,20 @@ defmodule Cluster.EcsClusterInfo do
    end)
   end
 
-  defp extract_container_data(%{"launchType" => "EC2"} = task, container_port, runtime_id_source) do
+  defp extract_container_data(%{"launchType" => "EC2"} = task, container_port, host_name_source) do
     container_instance_arn = Map.get(task, "containerInstanceArn")
 
     task
     |> Map.get("containers")
     |> Enum.map(fn c ->
-      runtime_id = get_runtime_id(c, runtime_id_source)
+      host_name = get_host_name(c, host_name_source)
       host_port = get_host_port(c, container_port)
 
-      if container_instance_arn && runtime_id && host_port do
+      if container_instance_arn && host_name && host_port do
         %Container{
           arn: container_instance_arn,
-          host_port: host_port,
-          runtime_id: runtime_id
+          host_name: host_name,
+          host_port: host_port
         }
       else
         nil
@@ -289,7 +291,7 @@ defmodule Cluster.EcsClusterInfo do
    end)
   end
 
-  defp extract_ips_ports(cluster_name, containers, region) do
+  defp set_ip_addresses(cluster_name, containers, region) do
     import SweetXml
 
     container_arns =
@@ -325,38 +327,14 @@ defmodule Cluster.EcsClusterInfo do
     result =
       Enum.map(containers, fn
         %Container{ip_address: nil} = container ->
-          ip_address = Map.get(container_arn_to_ip, container.arn)
-          {container.runtime_id, ip_address, container.host_port}
+          struct(container, ip_address: Map.get(container_arn_to_ip, container.arn))
 
         container ->
-          {container.runtime_id, container.ip_address, container.host_port}
+          container
       end)
 
     {:ok, result}
   end
-
-  defp runtime_id_to_nodename(runtime_id, app_prefix) do
-    :"#{app_prefix}@#{runtime_id}"
-  end
-
-  defp get_runtime_id(%{"networkInterfaces" => [%{"privateIpv4Address" => runtime_id}]}, :ip_address) do
-    runtime_id
-  end
-
-  defp get_runtime_id(%{"runtimeId" => runtime_id}, :runtime_id) do
-    String.slice(runtime_id, 0..11)
-  end
-
-  defp get_runtime_id(_container, _), do: nil
-
-  defp get_host_port(%{"networkBindings" => bindings}, container_port) when is_list(bindings) do
-    Enum.find_value(bindings, fn
-     %{"containerPort" => ^container_port, "hostPort" => h_port} -> h_port
-     _ -> false
-    end)
-  end
-
-  defp get_host_port(_container, _container_port), do: nil
 
   defp get_ip_address(%{"networkInterfaces" => [%{"privateIpv4Address" => string_ip}]}) do
     {:ok, ip_address} =
@@ -368,4 +346,27 @@ defmodule Cluster.EcsClusterInfo do
   end
 
   defp get_ip_address(_container), do: nil
+
+  defp get_host_name(%{"networkInterfaces" => [%{"privateIpv4Address" => ip_address}]}, :ip_address) do
+    ip_address
+  end
+
+  defp get_host_name(%{"runtimeId" => runtime_id}, :runtime_id) do
+    String.slice(runtime_id, 0..11)
+  end
+
+  defp get_host_name(_container, _), do: nil
+
+  defp get_host_port(%{"networkBindings" => bindings}, container_port) when is_list(bindings) do
+    Enum.find_value(bindings, fn
+     %{"containerPort" => ^container_port, "hostPort" => h_port} -> h_port
+     _ -> false
+    end)
+  end
+
+  defp get_host_port(_container, _container_port), do: nil
+
+  defp get_node_name(app_prefix, host_name) do
+    :"#{app_prefix}@#{host_name}"
+  end
 end
