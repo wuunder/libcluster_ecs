@@ -55,12 +55,16 @@ defmodule Cluster.EcsClusterInfo do
   end
 
   defp set_config(config, state) do
+    # Required config
     region = Keyword.fetch!(config, :region)
     cluster_name = Keyword.fetch!(config, :cluster_name)
     service_name = Keyword.fetch!(config, :service_name) |> List.wrap()
     app_prefix = Keyword.fetch!(config, :app_prefix)
     container_port = Keyword.fetch!(config, :container_port)
+
+    # Optional config
     host_name_source = Keyword.get(config, :host_name_source, :runtime_id)
+    match_tags = Keyword.get(config, :match_tags)
 
     state
     |> Map.put(:region, region)
@@ -69,6 +73,7 @@ defmodule Cluster.EcsClusterInfo do
     |> Map.put(:app_prefix, app_prefix)
     |> Map.put(:container_port, container_port)
     |> Map.put(:host_name_source, host_name_source)
+    |> Map.put(:match_tags, match_tags)
   end
 
   defp my_get_nodes(state) do
@@ -78,13 +83,15 @@ defmodule Cluster.EcsClusterInfo do
     app_prefix = state.app_prefix
     container_port = state.container_port
     host_name_source = state.host_name_source
+    match_tags = state.match_tags
 
     with {:ok, list_service_body} <- list_services(cluster_name, region),
          {:ok, service_arns} <- extract_service_arns(list_service_body),
          {:ok, task_arns} <-
            get_tasks_for_services(cluster_name, region, service_arns, service_name),
          {:ok, desc_task_body} <- describe_tasks(cluster_name, task_arns, region),
-         {:ok, containers} <- extract_containers(desc_task_body, container_port, host_name_source),
+         {:ok, tasks} <- filter_tasks(desc_task_body, match_tags),
+         {:ok, containers} <- extract_containers(tasks, container_port, host_name_source),
          {:ok, containers} <- set_ip_addresses(cluster_name, containers, region) do
       nodes =
         Map.new(containers, fn %Container{host_name: host_name, ip_address: ip, host_port: port} ->
@@ -175,6 +182,7 @@ defmodule Cluster.EcsClusterInfo do
   defp describe_tasks(cluster_name, task_arns, region) do
     params = %{
       "cluster" => cluster_name,
+      "include" => ["TAGS"],
       "tasks" => task_arns
     }
 
@@ -238,7 +246,33 @@ defmodule Cluster.EcsClusterInfo do
 
   defp find_service_arn(_, _), do: {:error, "no service arns returned"}
 
-  defp extract_containers(%{"tasks" => tasks}, container_port, host_name_source) do
+  defp filter_tasks(%{"tasks" => tasks}, nil) do
+    {:ok, tasks}
+  end
+
+  defp filter_tasks(%{"tasks" => tasks}, match_tags) do
+    match_tags_set =
+      match_tags
+      |> Enum.map(fn {key, value} -> %{"key" => key, "value" => value} end)
+      |> MapSet.new()
+
+    filtered_tasks =
+      tasks
+      |> Enum.filter(fn task ->
+        tags =
+          task
+          |> Map.get("tags", [])
+          |> MapSet.new()
+
+        MapSet.subset?(match_tags_set, tags)
+      end)
+
+    {:ok, filtered_tasks}
+  end
+
+  defp filter_tasks(_, _), do: {:error, "can't filter tasks"}
+
+  defp extract_containers(tasks, container_port, host_name_source) do
     containers =
       tasks
       |> Enum.flat_map(& extract_container_data(&1, container_port, host_name_source))
@@ -246,8 +280,6 @@ defmodule Cluster.EcsClusterInfo do
 
     {:ok, containers}
   end
-
-  defp extract_containers(_, _, _), do: {:error, "can't extract containers"}
 
   defp extract_container_data(%{"launchType" => "FARGATE"} = task, container_port, host_name_source) do
     task
