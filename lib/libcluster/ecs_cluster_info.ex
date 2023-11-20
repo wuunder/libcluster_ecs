@@ -281,7 +281,7 @@ defmodule Cluster.EcsClusterInfo do
     {:ok, containers}
   end
 
-  defp extract_container_data(%{"launchType" => "FARGATE"} = task, container_port, host_name_source) do
+  defp extract_container_data(%{"launchType" => "FARGATE", "lastStatus" => "RUNNING"} = task, container_port, host_name_source) do
     task
     |> Map.get("containers")
     |> Enum.map(fn c ->
@@ -322,6 +322,8 @@ defmodule Cluster.EcsClusterInfo do
       end
    end)
   end
+
+  defp extract_container_data(_task, _container_port, _host_name_source), do: []
 
   defp set_ip_addresses(cluster_name, containers, region) do
     import SweetXml
