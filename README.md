@@ -39,8 +39,6 @@ children = [
   ]
 ```
 
-If you want to use IP addresses as the host name in your node names (e.g. `app@10.12.132.4`) set `host_name_source` to `:ip_address` in config
-
 Configure libcluster EPMD by setting `DISTRIBUTION_PORT` in `rel/env.sh.eex`. This needs to be an env var because this EPMD module is used during startup and application configuration is not available yet:
 
 ```
@@ -63,6 +61,37 @@ ecs:DescribeTasks
 ecs:DescribeContainerInstances
 ec2:DescribeInstances
 ```
+
+### Optional config
+
+If you want to use IP addresses as the host name in your node names (e.g. `app@10.12.132.4`) set `host_name_source` to `:ip_address` in config:
+```
+config :libcluster,
+  topologies: [
+    mycluster: [
+      strategy: Cluster.EcsStrategy,
+      config: [
+        ...
+        host_name_source: :ip_address
+      ]
+    ]
+  ]
+```
+
+If you want to set rules for which tasks can join the cluster you can leverage the tagging features of ECS and set `match_tags` in your config:
+```
+config :libcluster,
+  topologies: [
+    mycluster: [
+      strategy: Cluster.EcsStrategy,
+      config: [
+        ...
+        match_tags: %{"deployment" => "red"}
+      ]
+    ]
+  ]
+```
+This will filter out tasks which do not contain all of the tags specified in `match_tags`
 
 ## Installation
 
